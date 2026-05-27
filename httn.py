@@ -5,6 +5,7 @@ from qiskit.quantum_info import SparsePauliOp
 from qiskit.primitives import StatevectorEstimator
 from qiskit_aer.primitives import EstimatorV2 as AerEstimatorV2
 import qr_decomposition as qr
+from pauli import pauli
 
 '''
 I will be implementing the circuit in Fig. 6e of arXiv:2007.009582v2 Quantum simulation with hybrid tensor networks
@@ -13,14 +14,6 @@ The quantum tensor has no classical indices.
 
 I will be finding the ground state energy of the Ising model using this hTTN.
 '''
-
-pauli = {
-        'I' :   np.eye(2),
-        'X' :   np.array([[0,1],[1,0]], dtype = float),
-        'Y' :   np.array([[0, -1j],[1j,0]], dtype = complex),
-        'Z' :   np.array([[1,0],[0,-1]], dtype = float),
-         }
-# In general, avoid using pauli Y (complex dtype). See what are the associated drawbacks.
 
 def QuantumTensor(n_legs):
     '''
