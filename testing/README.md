@@ -60,7 +60,7 @@ To run this repeatedly,
 
 ```Python
 $ python3 -i testing_pauli_interface.py 
->>> _bool, timing = check_MultiSiteOperator_to_pauli_list(runs = 5, max_num_sites = 5) 
+>>> _bool, timing = check_MultiSiteOperator_to_pauli_list(runs = 5, max_num_sites = 5, 
 ...                          verbose = True, give_times = True)
 ```
 

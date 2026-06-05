@@ -7,6 +7,7 @@ from qiskit_aer.primitives import EstimatorV2 as AerEstimatorV2
 import qr_decomposition as qr
 
 from pauli import pauli
+from operators import MultiSiteOperator, term
 
 '''
 I will be implementing the circuit in Fig. 6e of arXiv:2007.009582v2 Quantum simulation with hybrid tensor networks
@@ -52,7 +53,7 @@ def QuantumTensor(n_legs):
 def ClassicalTensor():
     return np.random.randn(2,2)
 
-def ising_operators(num_sites, h = 1, J = 1, pbc = True):
+def ising_operators(num_sites:MultiSiteOperator, h = 1, J = 1, pbc = True):
     '''
     H = -h\sum_{i} \sigma_x^(i) -J\sum_{i} \sigma_z^(i)\sigma_z^(i+1)
 
@@ -64,103 +65,10 @@ def ising_operators(num_sites, h = 1, J = 1, pbc = True):
     depending on if the index this is contracted with is clasical or quantum, 
     we will either consturct a SprasePauliOp or give the direct Pauli matrix.
     '''
-    local_terms = ['X' for site_idx in range(num_sites)]
-    local_coupling = -h
-    
-    left_interaction_terms = [None for idx in range(num_sites)]
-    right_interaction_terms = [None for idx in range(num_sites)]
-
-    if num_sites > 1:
-        interaction_coupling = -J
-
-        for site_idx in range(num_sites - 1): left_interaction_terms[site_idx] = 'Z'      # see PRB 90, 125154 (2014) Eq. 1
-        for site_idx in range(1, num_sites): right_interaction_terms[site_idx] = 'Z'
-
-        if pbc and num_sites != 2:          # To avoid double counting
-            left_interaction_terms[- 1] = 'Z'
-            right_interaction_terms[0] = 'Z'
-    
-    out = {
-            'local' : (local_coupling, local_terms),
-            'interaction' : (interaction_coupling, left_interaction_terms, right_interaction_terms)
-           }
-    
-    '''
-    for now I have fixed the number of 'terms' you can have.
-    say for instance your Hamiltonian defined on one site is X^(0) + Y^(0). (pauli matrices)
-    One might say that there are two terms in this Hamiltonian.
-    I am defining this to be one term: (X^(0) + Y^(0)). 
-    This presents a problem when the number of summands is not equal to the number of terms (like above)
-    This is not there for the Ising model but this is something to look out for.
-    Need to present the summands of the Hamiltonian with more control
-    on which operator acts on which index.
-
-    Also need to find a way to account for more than one body interactions
-    Also need to fix this so that it works for long range interactions like in LMG.
-    Also should be able to handle cases when there are no interaction terms
-    '''
-    return out
-
-def _pauli_list_from_operator(hamiltonian_out):
-    '''
-    Takes the output of something like the ising_operator
-    and returns the associated list containing Pauli strings
-    compatible with SprasePauliOp.from_list
-    '''
-    
-    local_coupling, local_terms = hamiltonian_out['local']
-    interaction_coupling, left_interaction_terms, right_interaction_terms = hamiltonian_out['interaction']
-    
-    string_length = len(local_terms)            
-
-    assert len(local_terms) == len(left_interaction_terms) == len(right_interaction_terms), 'Elements of each term must map to a single site.'
-
-    def _pad_identities(bare_pauli_str, site_idx):
-        # entire function would not support long range interactions
-        out = 'I'*site_idx + bare_pauli_str + 'I'*(string_length - len(bare_pauli_str) - site_idx)
-        return out
-    
-    # adding the local terms
-    out_list = [(_pad_identities(bare_pauli_str = op, site_idx = idx), local_coupling) for idx, op in enumerate(local_terms)]
-    
-    # adding the interaction terms
-    for site_idx in range(string_length-1):
-        left_pauli_op = left_interaction_terms[site_idx]
-        right_pauli_op = right_interaction_terms[site_idx+1]
-        
-        out_list.append((_pad_identities(left_pauli_op + right_pauli_op, site_idx), interaction_coupling))
-    
-    # by hand adding the interaction terms incase we have pbc. 
-    # the _pad_identities function is insufficent when left_pauli_op and right_pauli_op are not adjacent. Needs another function to handle that.
-    if right_interaction_terms[0] != None:
-        # for the ising model this will always only happen when left_interaction_terms[-1] != None.
-        # This is veryy crude. Fix.
-        left_pauli_op = left_interaction_terms[-1]
-        right_pauli_op = right_interaction_terms[0]
-        out_list.append((right_pauli_op + 'I'*(string_length - 2) + left_pauli_op, interaction_coupling))
-
-    return out_list
-
-def _pauli_character_to_array(sigma):   # how can this be vectorised so that it takes in a list as an input and applies this operation parallely to all the sigmas inside that list?
-    '''
-    returns the matrix corresponding to a pauli character
-    if sigma is not a string, returns sigma
-    '''
-    if isinstance(sigma, str):
-        return pauli[sigma]
-    return sigma
-
-def _array_to_pauli_list(arr):
-    '''
-    Takes in an ndarray of shape (2,2)
-    returns the corresponding pauli list
-
-    np.ndarray([[1,1],[1,1]]) -> [ ('X',1), ('I',1) ]
-    '''
-    a, b, c, d = arr[0,0], arr[0,1], arr[1,0], arr[1,1]
-    I_coeff = .5*(a + c)
-    Z_coeff = .5*(a-c)
-    # do Y_coeff and X_coeff as well
+    mso = MultiSiteOperator(num_sites)
+    mso.add_uniform_single_site_terms(-pauli['X']*h)
+    mso.add_uniform_local_two_site_terms(-pauli['Z']*J)
+    return mso
 
 def _expectation_circuit(params, circuit, operator:SparsePauliOp, estimator = StatevectorEstimator(), shots = None):
     '''
@@ -179,19 +87,12 @@ def _expectation_circuit(params, circuit, operator:SparsePauliOp, estimator = St
     expect_value = float(result[0].data.evs[0])
     return expect_value
 
-def _ndarry_list_to_pauli_list(arr):
-    '''
-    takes a list containing 2 by 2 matrices 
-    and gives the corresponding pauli list
-    '''
-
-
-def expectation_tensor(params, q_tensor, operators, estimator = StatevectorEstimator(), shots = None):
+def expectation_tensor(params, q_tensor, operators: MultiSiteOperator, estimator = StatevectorEstimator(), shots = None):
     '''
     Evaluated the expectation value of the operator 
     with respect to the quantum tensor q_tensor.
 
-    operators here is assumed to be a list containing ndarryas of ndim 2
+    operators here is a MultiSiteOperator obejct.
 
     This would involve contractions with the P matrices as well.
 
@@ -208,7 +109,7 @@ def expectation_tensor(params, q_tensor, operators, estimator = StatevectorEstim
     # now I will have to convert P_contracted_operator to SparsePauliOp and then use _expectation_circuit
     # In general, wherever I have used q_tensor, I will have to fix it to accomodate the P matrices as well.
 
-def _pop_at_idx(pauli_list, idx):
+def _pop_at_idx(pauli_list, idx):                       # CLEANUP : put these helper functions in a different file. Either that or create a PauliList class that handles all these.
     '''
     pauli_list = [('XII', -1), ('IXI', -1), ('IIX', -1), ('ZZI', -1), ('IZZ', -1), ('ZIZ', -1)]
     idx = 1
@@ -224,7 +125,7 @@ def _pop_at_idx(pauli_list, idx):
         pauli_list_popped[i] = tuple(term)
     return pauli_list_popped
 
-def _push_at_idx(pauli_list, sigma:str, idx):
+def _push_at_idx(pauli_list, sigma:str, idx):           # CLEANUP : There is a similar function in operators.py. Either merge these two and import one, or create a PauliList class.
     '''
     pauli_list = [('XII', -1), ('IXI', -1), ('IIX', -1), ('ZZI', -1), ('IZZ', -1), ('ZIZ', -1)]
     idx = 1
@@ -339,9 +240,3 @@ num_quantum_legs = 4
 
 
 quantum_tensor = QuantumTensor(num_quantum_legs)               # we will compare this against the classical ttn defined on 8 sites
-op = ising_operators(3)
-pauli_list = _pauli_list_from_operator(op)
-params = [0,0,0,0]
-
-
-

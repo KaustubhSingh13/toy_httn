@@ -273,7 +273,7 @@ class term:
         indiv_pauli_decomp = {}
         
         # decomposing the term into pauli matrices along with site index
-        for site_idx, arr in self.site_ops.items():
+        for site_idx, arr in self.site_ops.items():                             # PARALLELIZE: MEDIUM-HIGH
             indiv_pauli_decomp[site_idx] = array_to_pauli_list_hermitian(arr)   # IF COMPLEX DTYPE TROUBLE, CHANGE THIS TO array_to_pauli_list_general()
         '''
         (2X^(0) + 3Z^(0)) \otimes (5Y^(2) - I^(2))
@@ -304,7 +304,7 @@ class term:
         ]
 
         for site_idx, pauli_list in list(indiv_pauli_decomp.items())[1:]:   # skipping the 0th element
-            pauli_list_out = tensor_pauli_lists(pauli_list_out, pauli_list, site_idx)
+            pauli_list_out = tensor_pauli_lists(pauli_list_out, pauli_list, site_idx)   #PARALLELIZE: MEDIUM-HIGH
 
         # tail I padding
         final_idtt_padding = 'I'*(num_sites - largest_site_idx - 1)
@@ -326,6 +326,25 @@ class term:
                 out = np.kron(out,np.eye(2))
             
         return out
+
+    def sandwich(self, P_matrices: list):               # maybe this could be absorbed into a different method later. 
+        '''
+        P_matrices is a list containing ndarrays of ndim = bond dim of quantum tensors
+        of length self.num_sites
+        This contracts P^\dagger term P across all sites
+
+        I am assuming that the P matrices are all unitary. See Section D. (ii) of the PRX paper.
+        This would preserve the number of sites with support.
+        
+        Returns a new term object
+        '''
+        site_ops_out = {}
+        for site_idx, mat in self.site_ops.items():             # PARALLELIZE: MEDIUM
+            p = P_matrices[site_idx]
+            site_ops_out[site_idx] = p.conj().T @ mat @ p       # @ calls np.matmul which uses BLAS. Fast enough. PARALLELIZE: LOW (increases with the number of qubits)
+
+        term_out = term(site_ops = site_ops_out, num_sites = self.num_sites)
+        return term_out
 
     def __repr__(self):
         # maybe change this to give the pauli list form
@@ -400,7 +419,7 @@ class MultiSiteOperator:
                 }
         }
         '''
-        for num_supported_sites, trm_set in trms_dict.items():
+        for num_supported_sites, trm_set in trms_dict.items():              # PARALLELIZE: MEDIUM-HIGH
             for trm in trm_set:
                 self.add_term(trm)
 
@@ -414,7 +433,7 @@ class MultiSiteOperator:
         if 1 not in self.terms.keys():
             self.terms[1] = set()
 
-        for site_idx in range(self.num_sites):
+        for site_idx in range(self.num_sites):                              # PARALLELIZE: VERY LOW
             trm = term({site_idx: matrix},num_sites = self.num_sites)
             self.terms[1].add(trm)                         # self.terms[i] is a set
 
@@ -431,7 +450,7 @@ class MultiSiteOperator:
         if not 2 in self.terms.keys():
             self.terms[2] = set()
 
-        for site_idx in range(self.num_sites - 1):
+        for site_idx in range(self.num_sites - 1):                          # PARALLELIZE: VERY LOW
             trm = term({site_idx: matrix, site_idx+1: matrix}, num_sites = self.num_sites)
             self.terms[2].add(trm)
 
@@ -439,13 +458,13 @@ class MultiSiteOperator:
             trm = term({self.num_sites-1: matrix, 0: matrix},num_sites = self.num_sites)
             self.terms[2].add(trm)
     
-    def unfold(self):
+    def unfold(self):                                                       #FIX: redundant?
         '''
         returns a set with all the term objects
         '''
         out = []
-        for num_supported_sites, trm_set in self.terms.items():
-            for trm in trm_set:
+        for num_supported_sites, trm_set in self.terms.items():             # PARALLELIZE?
+            for trm in trm_set:         
                 out.append(trm)
         return set(out)
     
@@ -458,7 +477,7 @@ class MultiSiteOperator:
 
         # converting terms which have support on the same number of sites
         # into pauli lists and then adding them up
-        for num_supported_sites,trm_set in self.terms.items():
+        for num_supported_sites,trm_set in self.terms.items():              # PARALLELIZE: HIGH
             _sum = []
             for trm in trm_set:
                 _sum = _add_pauli_lists(_sum, trm.to_pauli_list())
@@ -474,12 +493,57 @@ class MultiSiteOperator:
         '''
         N = self.num_sites
         _sum = np.zeros([2**N, 2**N], dtype = complex)        # Change this dtype to complex if casting issues occur.
-        unfolded_terms = self.unfold()
-        for trm in unfolded_terms:
+        unfolded_terms = self.unfold()              # FIX: unfold as it is uses a double for loop. you are using a for looop again here. SPEEDUP.
+        for trm in unfolded_terms:                                      # PARALLELIZE: MEDIUM
             _sum += trm.to_matrix()
 
         return _sum
 
+    @property
+    def shape(self) -> dict:
+        '''
+        returns a dict
+        with the same keys as self.terms
+        and self.shape[num_supported_sites] being the number of terms which
+        have support on num_supported_sites
+
+        In the testing\testing_pauli_interface.py, 
+        a random shape generated by _random_num_terms_dict(num_sites, max_num_terms)
+
+        shape <---> num_terms_dict  (shape is a better name.) 
+
+        FIX change the name from num_terms_dict to shape in all testing files including README.md
+        '''
+        shape_out = {}
+        for num_supported_sites, term_set in self.terms.items():        # PARALLELIZE: LOW
+            shape_out[num_supported_sites] = len(term_set)
+
+        return shape_out
+    
+    def sandwich(self, P_matrices:list):
+        '''
+        P_matrices is a list containing ndarrays of ndim = bond dim of quantum tensors
+
+        for now I am assuming that the P matrices are all unitary
+        this reduces the number of contractions we have to perform
+
+        evaluates P^\dagger O P
+        The P matrices are needed for implicitly isometrizing the hTTN. 
+        See the PRX paper.
+
+        returns a new MultiSiteOperator object
+        '''
+        terms_dict_out = {}                                # would it be better (faster or more memory efficient) to do this in place instead of return a new MultiSiteOperator object?
+        for num_supported_sites, terms_set in self.terms.items():           # PARALLELIZE: HIGH
+            _trm_set = set()
+            for trm in terms_set:
+                new_trm = trm.sandwich(P_matrices)
+                _trm_set.add(new_trm) 
+            terms_dict_out[num_supported_sites] = _trm_set
+
+        mso_out = MultiSiteOperator(self.num_sites)
+        mso_out.terms = terms_dict_out                      # would have been faster than using .add_all_terms() because mso_out.terms had nothing and all terms getting added would be consistent (having the same num_sites) since we copied from a pre-existing mso.
+        return mso_out
     
     def __str__(self):
         return str(self.to_pauli_list())
