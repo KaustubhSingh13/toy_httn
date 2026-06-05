@@ -69,7 +69,7 @@ def create_random_term(num_sites, num_supported_sites,
 
     if dtype is complex,
     then the real and imag parts will be sampled 
-    from ints between
+    from ints between lo and hi
     '''
     assert num_sites >= num_supported_sites, 'num_sites must be greater than or equal to the num_supported_sites.'
     supported_site_idxs = _not_repeated_randint(0, num_sites, num_supported_sites)
@@ -211,7 +211,7 @@ def check_term_to_pauli_list(runs = 5, max_num_sites = 10,
                         (matrix_conversion_times,        matrix_conversion_var), 
                         (qiskit_matrix_conversion_times, qiskit_matrix_conversion_var)
                      ] 
-    return True
+    return True, None
 
 def _random_num_terms_dict(num_sites, max_num_terms):
     '''
@@ -287,6 +287,6 @@ def check_MultiSiteOperator_to_pauli_list(runs = 10, max_num_sites = 5, max_num_
 
     if give_times:
         return True, [pauli_conversion_times, matrix_conversion_times, qiskit_matrix_conversion_times]
-    return True
+    return True, None
             
     
