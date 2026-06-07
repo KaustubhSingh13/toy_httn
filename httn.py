@@ -8,6 +8,7 @@ import qr_decomposition as qr
 
 from pauli import pauli
 from operators import MultiSiteOperator, term
+from qr_decomposition import qr_tensors, combine, projection_to_closest_unitary
 
 '''
 I will be implementing the circuit in Fig. 6e of arXiv:2007.009582v2 Quantum simulation with hybrid tensor networks
@@ -53,7 +54,8 @@ def QuantumTensor(n_legs):
 def ClassicalTensor():
     return np.random.randn(2,2)
 
-def ising_operators(num_sites:MultiSiteOperator, h = 1, J = 1, pbc = True):
+def ising_operators(num_sites, 
+                    h = 1, J = 1, pbc = True) -> MultiSiteOperator:
     '''
     H = -h\sum_{i} \sigma_x^(i) -J\sum_{i} \sigma_z^(i)\sigma_z^(i+1)
 
@@ -70,7 +72,8 @@ def ising_operators(num_sites:MultiSiteOperator, h = 1, J = 1, pbc = True):
     mso.add_uniform_local_two_site_terms(-pauli['Z']*J)
     return mso
 
-def _expectation_circuit(params, circuit, operator:SparsePauliOp, estimator = StatevectorEstimator(), shots = None):
+def _expectation_circuit(params, circuit, operator:SparsePauliOp, 
+                         estimator = StatevectorEstimator(), shots = None):
     '''
     Evaluates the expectation value of the state formed by circuit
     for the operator defined by operator.
@@ -87,28 +90,28 @@ def _expectation_circuit(params, circuit, operator:SparsePauliOp, estimator = St
     expect_value = float(result[0].data.evs[0])
     return expect_value
 
-def expectation_tensor(params, q_tensor, operators: MultiSiteOperator, estimator = StatevectorEstimator(), shots = None):
+def expectation_tensor(params, q_tensor, operator: MultiSiteOperator, 
+                       estimator = StatevectorEstimator(), shots = None):
     '''
     Evaluated the expectation value of the operator 
     with respect to the quantum tensor q_tensor.
 
-    operators here is a MultiSiteOperator obejct.
+    operator here is a MultiSiteOperator obejct.
 
     This would involve contractions with the P matrices as well.
 
     \bra{\psi}P^\dagger O P \ket{psi}
     Essetinally this is taking the expectation value of P^\dagger O P
     '''
-    q_circuit, P_list = q_tensor
-    P_contracted_operator = []
-    for i,O_i in enumerate(operators):                                                      # how can I parallelize this loop
-        P_i = P_list[i]
-        P_i_dagger = P_i.T.conj()
-        P_contracted_operator.append(np.einsum('ij,jk,kl->il',P_i_dagger,O_i,P_i))          # can this be made faster? maybe use tensordot.
-    # INCOMPLETE
-    # now I will have to convert P_contracted_operator to SparsePauliOp and then use _expectation_circuit
-    # In general, wherever I have used q_tensor, I will have to fix it to accomodate the P matrices as well.
+    q_circuit, P_matrices = q_tensor
+    sandwiched_operator = operator.sandwich(P_matrices)
 
+    p_list = sandwiched_operator.to_pauli_list()
+    spo = SparsePauliOp.from_list(p_list)
+
+    return _expectation_circuit(params, q_circuit, spo, 
+                                estimator, shots)
+    
 def _pop_at_idx(pauli_list, idx):                       # CLEANUP : put these helper functions in a different file. Either that or create a PauliList class that handles all these.
     '''
     pauli_list = [('XII', -1), ('IXI', -1), ('IIX', -1), ('ZZI', -1), ('IZZ', -1), ('ZIZ', -1)]
@@ -169,8 +172,9 @@ def open_link_contraction(q_tensor, params, idx, pauli_list, estimator=Statevect
     
     Assumes that the q_tensor has no classical indices.
     '''
-    assert q_tensor.num_qubits - 1 >= idx, f"Can't have index {idx} on a quantum circuit of {q_tensor.num_qubits} qubits."
-    assert np.sum([len(pauli_op[0])+1-q_tensor.num_qubits for pauli_op in pauli_list]) == 0, 'Each pauli string in pauli_list must have one less than number of operators as the number of qubits in q_tensors'     # make sure that these assert values are working as expected. maybe using allclose would be better.
+    q_circuit, P_matrices = q_tensor                    # FIX INCOMPLETE incorporate P_matrices 
+    assert q_circuit.num_qubits - 1 >= idx, f"Can't have index {idx} on a quantum circuit of {q_tensor.num_qubits} qubits."
+    assert np.sum([len(pauli_op[0])+1-q_circuit.num_qubits for pauli_op in pauli_list]) == 0, 'Each pauli string in pauli_list must have one less than number of operators as the number of qubits in q_circuit'     # make sure that these assert values are working as expected. maybe using allclose would be better.
     # Calculating the expectation values E(I), E(X), E(Y) and E(Z) as defined in Eq. A21 of arXiv:2007.009582v2
     def _E(sigma:str)->float:
         '''
@@ -182,7 +186,7 @@ def open_link_contraction(q_tensor, params, idx, pauli_list, estimator=Statevect
         pauli_list_with_sigma = _push_at_idx(pauli_list, sigma, idx)
         
         operator = SparsePauliOp.from_list(pauli_list_with_sigma)
-        return _expectation(params, q_tensor, operator, estimator, shots)
+        return _expectation(params, q_circuit, operator, estimator, shots)
 
     # Computing M as done in A22 of arXiv:2007.009582v2
     M = np.zeros([2,2],dtype = complex)
@@ -232,6 +236,48 @@ def norm_of_network(q_tensor:QuantumCircuit, params, c_tensor, estimator = State
     # would c_tensor = c_tensor / norm change c_tensor for good?
     return norm
 
+def isometrise_quantum_tensor():
+    '''
+    See section III A of the PRX paper.
+    '''
+
+def isometrise_classical_tensor(c_tensor, q_tensor):
+    '''
+    sets the quantum tensor as the centre of isometrisation
+    by isometrising the classical tensor
+
+    returns the new (isometrised) c_tensor 
+    and the new q_tensor (with new P_matrices)
+    '''
+    
+    q_circuit, P_matrices = q_tensor
+    q_classical, r_classical = qr_tensors(c_tensor, 0)          # because 0th index of the ctensor is contracted with the last index of the qtensor
+
+    P_matrices[-1] = P_matrices[-1] @ r_classical               # because the last index of the qtensor is contracted with the 0th index of teh classical tensor
+
+    q_tensor_out = (q_circuit, P_matrices)
+
+    return q_classical, q_tensor_out
+    
+def unitarise_all_P_matrices(q_tensor):
+    '''
+    projects all the P matrices to the closest unitary
+    by the Frobenius norm.
+    '''
+    q_circuit, P_matrices = q_tensor 
+
+    for idx, P in enumerate(P_matrices):                        # PARALLELIZE: LOW
+        P_matrices[idx] = projection_to_closest_unitary(P)
+
+    return (q_circuit, P_matrices)
+
+def effective_hamiltonian_quantum_tensor():
+    pass
+def effective_hamiltonian_classical_tensor():
+    pass
+
+def optimise_quantum_tensor():
+    pass
 
 def optimise_classical_tensor(c_tensor):
     pass

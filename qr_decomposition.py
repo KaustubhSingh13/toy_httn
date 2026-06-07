@@ -47,3 +47,22 @@ def combine(t,r,t_index,r_index):
     out = np.tensordot(t,r,axes=[t_index,r_index])
     return np.moveaxis(out,len(t.shape)-1,t_index)  # len(t.shape)-1 because the other (non-contracted index) of r would be placed at the end by tensordot convention. We want to preserve the shape of t after contracting it with r.
 
+def projection_to_closest_unitary(P):
+    '''
+    P: ndarray of ndim 2
+    returns the closest unitary matrix to P
+    according to the Frobenius norm.
+
+    See the PRX paper, section III D (ii).
+    First we perform an SVD decomp,
+    P = U S V^\dagger
+    We then replace teh Schmidt value matrix S with identity
+    and return U V^\dagger.
+
+    (In notes, prove that this is the closest 
+    unitary to P via the Frobenius norm.)
+    '''
+    U,S,V_dagger = np.linalg.svd(P) 
+    return U@V_dagger
+    
+

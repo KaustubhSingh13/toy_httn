@@ -533,6 +533,7 @@ class MultiSiteOperator:
 
         returns a new MultiSiteOperator object
         '''
+        assert len(P_matrices) == self.num_sites, 'The number of P matrices must be equal to the number of sites'
         terms_dict_out = {}                                # would it be better (faster or more memory efficient) to do this in place instead of return a new MultiSiteOperator object?
         for num_supported_sites, terms_set in self.terms.items():           # PARALLELIZE: HIGH
             _trm_set = set()
