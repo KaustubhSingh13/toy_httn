@@ -96,10 +96,10 @@ def create_random_term(num_sites, num_supported_sites,
                 trm[idx] = A
     return term(trm)
 
-def create_random_MultiSiteOperator(num_sites, num_terms_dict, 
+def create_random_MultiSiteOperator(num_sites, shape, 
                                     lo = -10, hi = 10, dtype = complex, hermitian = True):
     '''
-    num_terms_dict = {1: 2, 2: 7, 5:9} 
+    shape = {1: 2, 2: 7, 5:9} 
     => 
     there are 2 terms with support on 1 site
               7 terms with support on 2 sites
@@ -108,11 +108,11 @@ def create_random_MultiSiteOperator(num_sites, num_terms_dict,
     within each term, the matrices will have elements
     chosen on random between lo and hi
     '''
-    largest_num_supported_sites = max(num_terms_dict.keys())
+    largest_num_supported_sites = max(shape.keys())
     assert num_sites >= largest_num_supported_sites , "can't have support on {largest_num_supported_sites} on a lattice with {num_sites} sites"
     mso_terms = {}
 
-    for num_supported_sites, num_terms in num_terms_dict.items():
+    for num_supported_sites, num_terms in shape.items():
         mso_terms[num_supported_sites] = set()
         for _ in range(num_terms):
             trm = create_random_term(num_sites, num_supported_sites, 
@@ -213,12 +213,12 @@ def check_term_to_pauli_list(runs = 5, max_num_sites = 10,
                      ] 
     return True, None
 
-def _random_num_terms_dict(num_sites, max_num_terms):
+def _random_shape(num_sites, max_num_terms):
     '''
-    creates a random num_terms_dict
+    creates a random shape
     with max site index being num_sites - 1.
     
-    num_terms_dict = {1: 2, 2: 7, 5:9} 
+    shape = {1: 2, 2: 7, 5:9} 
     => 
     there are 2 terms with support on 1 site
               7 terms with support on 2 sites
@@ -237,8 +237,8 @@ def check_MultiSiteOperator_to_pauli_list(runs = 10, max_num_sites = 5, max_num_
     '''
     for each run
         for num_sites up to max_num_sites
-            creates a random num_terms_dict
-            and instantians a random MultiSiteOperator with that num_terms_dict
+            creates a random shape
+            and instantians a random MultiSiteOperator with that shape
             gets the corresponding pauli list
             uses that pauli list to create a SparsePauliOp
             checks the MultiSiteOperator.to_matrix() against SparsePauliOp.to_matrix()
@@ -246,15 +246,15 @@ def check_MultiSiteOperator_to_pauli_list(runs = 10, max_num_sites = 5, max_num_
     This tests the to_matrix() method and the to_pauli_list() method
     '''
     if verbose:
-        print('my time (s)\tSparsePauliOp time (s)\t\tPauli list conversion time (s)\tnum_terms_dict')
+        print('my time (s)\tSparsePauliOp time (s)\t\tPauli list conversion time (s)\tshape')
 
     pauli_conversion_times, qiskit_matrix_conversion_times, matrix_conversion_times =[],[],[]
     
     for num_sites in range(1,max_num_sites+1):
         for run_idx in range(runs):
 
-            num_terms_dict = _random_num_terms_dict(num_sites, max_num_terms)
-            mso = create_random_MultiSiteOperator(num_sites,num_terms_dict,
+            shape = _random_shape(num_sites, max_num_terms)
+            mso = create_random_MultiSiteOperator(num_sites,shape,
                                               lo, hi, dtype, hermitian)
             
             pl_st = time.perf_counter()
@@ -282,7 +282,7 @@ def check_MultiSiteOperator_to_pauli_list(runs = 10, max_num_sites = 5, max_num_
 
             if verbose:
                 diff = 'mine faster' if mmc<qmc else 'qiskit faster'
-                print(f"{mmc:.2e}\t{qmc:.2e}\t{diff}\t{pauli_conversion_times[-1]:.2e}\t{num_terms_dict}")
+                print(f"{mmc:.2e}\t{qmc:.2e}\t{diff}\t{pauli_conversion_times[-1]:.2e}\t\t\t{shape}")
         print(f"\nnum_sites = {num_sites} done\n\n")
 
     if give_times:

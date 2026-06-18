@@ -1,6 +1,8 @@
 import numpy as np
-from pauli import pauli
 
+from qiskit.quantum_info import SparsePauliOp               # needed to convert MultiSiteOperator to SparsePauliOp for qiskit interface.
+from pauli import pauli
+from custom_repr import _repr_value
 # *************************************************************************
 
 # I have hardcoded 2 level systems in this implementation (eg. spin chains)
@@ -124,7 +126,7 @@ def _pauli_dict_to_pauli_list(p_dict):
     '''
     return [[pauli_string, coeff] for pauli_string, coeff in p_dict.items()]
 
-def _add_pauli_lists(p_list_0, p_list_1):                                           # IMPORTANT SIMPLE SPEED UP: DONT ADD TERMS. JUST APPEND.
+def _add_pauli_lists(p_list_0, p_list_1):                                           # TODO IMPORTANT SIMPLE SPEED UP: DONT ADD TERMS. JUST APPEND.
     p_dict_0 = _pauli_list_to_pauli_dict(p_list_0)                                  # Do we even need to group terms together like this?
     p_dict_1 = _pauli_list_to_pauli_dict(p_list_1)                                  # sure it looks prettier, but SparsePauliOp does not care if we pass [['X',2]] or [['X',1],['X',1]]. 
                                                                                     # both are treated the same by SparsePauliOp. 
@@ -270,6 +272,9 @@ class term:
         '''
         num_sites = self.num_sites
 
+        if len(self) == 0:                  # by hand defining the absence of anything in self.site_ops as all identities.
+            return [['I'*self.num_sites,1]]
+
         indiv_pauli_decomp = {}
         
         # decomposing the term into pauli matrices along with site index
@@ -327,11 +332,12 @@ class term:
             
         return out
 
-    def sandwich(self, P_matrices: list):               # maybe this could be absorbed into a different method later. 
+    def sandwich(self, P_matrices: list, *exclude):               # maybe this could be absorbed into a different method later. 
         '''
         P_matrices is a list containing ndarrays of ndim = bond dim of quantum tensors
         of length self.num_sites
         This contracts P^\dagger term P across all sites
+        excluding the ones in the tuple exclude.
 
         I am assuming that the P matrices are all unitary. See Section D. (ii) of the PRX paper.
         This would preserve the number of sites with support.
@@ -340,11 +346,61 @@ class term:
         '''
         site_ops_out = {}
         for site_idx, mat in self.site_ops.items():             # PARALLELIZE: MEDIUM
+            if site_idx in exclude:
+                continue
             p = P_matrices[site_idx]
             site_ops_out[site_idx] = p.conj().T @ mat @ p       # @ calls np.matmul which uses BLAS. Fast enough. PARALLELIZE: LOW (increases with the number of qubits)
 
         term_out = term(site_ops = site_ops_out, num_sites = self.num_sites)
         return term_out
+
+    def push_at_idx(self, matrix, idx):
+        '''
+        matrix is an ndarray of shape (2,2)
+        
+        self.site_ops = {0:A, 1:B, 4:C}
+        
+        idx = 0, matrix = D
+        ->
+        trm_out.site_ops = {0:D, 1:A, 2:B, 5:C}
+
+
+        idx = 3, matrix = D
+        ->
+        trm_out.site_ops = {3:D, 0:A, 1:B, 4:C}
+        '''
+
+        site_ops_out = {}
+        for i, mat in self.site_ops.items():                # PARALLELIZE
+            if i>=idx:
+                site_ops_out[i+1] = mat 
+            else:
+                site_ops_out[i] = mat
+        site_ops_out[idx] = matrix 
+
+        return term(site_ops_out, self.num_sites+1)
+
+    def pop_at_idx(self, *idxs):                              # TODO test
+        '''
+        decreases self.num_sites by 1 
+        removes the single site operator at site index: idx.
+        '''
+        out_site_ops = {}
+        srt_idxs = sorted(idxs)
+
+        def _subs(i):           # returns the number of elements preceeding i had i been in srt_idxs
+            subs = 0
+            for j in srt_idxs:
+                if j<=i:
+                    subs +=1
+            return subs
+
+        for site_idx, mat in self.site_ops.items():
+            if site_idx not in idxs:
+                subs = _subs(site_idx)
+                out_site_ops[site_idx-subs] = mat
+        out_trm = term(out_site_ops, num_sites = self.num_sites - len(idxs))
+        return out_trm 
 
     def __repr__(self):
         # maybe change this to give the pauli list form
@@ -358,7 +414,7 @@ class MultiSiteOperator:
     Would be compatible with TTNs and hTTNs.
     '''
 
-    def __init__(self, num_sites):
+    def __init__(self, num_sites, terms = None):
         '''
         num_terms_list = [
                             num_single_site_terms,
@@ -375,8 +431,11 @@ class MultiSiteOperator:
         '''
         self.num_sites = num_sites
         
-        #self.terms = [set() for _ in range(num_term_types)]    # would it be faster if this was a dict?
-        self.terms = {}
+        #self.terms = [set() for _ in range(num_term_types)]    # would it be faster if this was a dict?    
+        if terms is None:
+            self.terms = {}
+        else:
+            self.terms = terms
         '''
         self.terms[0] would be a set of all the single site terms
         self.terms[1] would be a set of all two site terms and so on
@@ -520,12 +579,15 @@ class MultiSiteOperator:
 
         return shape_out
     
-    def sandwich(self, P_matrices:list):
+    def sandwich(self, P_matrices:list, *exclude):
         '''
         P_matrices is a list containing ndarrays of ndim = bond dim of quantum tensors
 
         for now I am assuming that the P matrices are all unitary
         this reduces the number of contractions we have to perform
+
+        exclude is a tuple containing 
+        the indices which would be excluded from the following contraction
 
         evaluates P^\dagger O P
         The P matrices are needed for implicitly isometrizing the hTTN. 
@@ -533,21 +595,108 @@ class MultiSiteOperator:
 
         returns a new MultiSiteOperator object
         '''
-        assert len(P_matrices) == self.num_sites, 'The number of P matrices must be equal to the number of sites'
+        assert len(P_matrices)-len(exclude) == self.num_sites, 'The number of P matrices must be equal to the number of sites'
         terms_dict_out = {}                                # would it be better (faster or more memory efficient) to do this in place instead of return a new MultiSiteOperator object?
         for num_supported_sites, terms_set in self.terms.items():           # PARALLELIZE: HIGH
             _trm_set = set()
             for trm in terms_set:
-                new_trm = trm.sandwich(P_matrices)
+                new_trm = trm.sandwich(P_matrices, *exclude)
                 _trm_set.add(new_trm) 
             terms_dict_out[num_supported_sites] = _trm_set
 
         mso_out = MultiSiteOperator(self.num_sites)
         mso_out.terms = terms_dict_out                      # would have been faster than using .add_all_terms() because mso_out.terms had nothing and all terms getting added would be consistent (having the same num_sites) since we copied from a pre-existing mso.
         return mso_out
+
+    def apply_to_all_terms(self, term_meth):
+        '''
+        term_func is a function that 
+        takes a term object as its first input
+        and returns a term object
+
+        this method returns a MultiSiteOperator object
+        which has applied term_meth to all the terms in MultiSiteOperator.
+
+        term_meth is a method which returns a term object.
+
+        This MultiSiteOperator might have a different number of num_sites.
+        '''
+        # push_at_idx and pop_at_idx, sandwich are good candidates for this.
+        # this would reduce repeated code and improve readibility.
+        # TODO incomplete
+
+
+    def push_at_idx(self, matrix, idx):          # TODO test                      
+        '''
+        for every term in the MultiSiteOperator object,
+        does term.push_at_idx
+
+        returns a new MultiSiteOperator obejct
+
+        self.to_pauli_list() = [('XII', -1), ('IXI', -1), ('IIX', -1), 
+                                ('ZZI', -1), ('IZZ', -1), ('ZIZ', -1)]
+        idx = 1
+        matrix = Y
+
+        ->
+        
+        self.push_at_idx(matrix, idx).to_pauli_list() = 
+        [('XYII', -1), ('IYXI', -1), ('IYIX', -1), ('ZYZI', -1), ('IYZZ', -1), ('ZYIZ', -1)]
+        '''
+        terms_out = {}
+        for num_supported_sites, term_set in self.terms.items():
+            term_set_out = set()
+            for trm in term_set:
+                term_set_out.add(trm.push_at_idx(matrix, idx))
+            terms_out[num_supported_sites+1] = term_set_out
+        
+        mso_out = MultiSiteOperator(self.num_sites+1, terms_out)
+        return mso_out 
+    
+    def pop_at_idx(self, *idxs):              # TODO Test
+        '''
+        self.to_pauli_list() = 
+        [('XII', -1), ('IXI', -1), ('IIX', -1), ('ZZI', -1), ('IZZ', -1), ('ZIZ', -1)]
+        idx = 1
+        
+        ->
+        
+        out.to_pauli_list() = 
+        [('XI', -1), ('II', -1), ('IX', -1), ('ZI', -1), ('IZ', -1), ('ZZ', -1)]
+
+        returns a MultiSiteOperator object.
+        this and push_at_idx are needed for finding open link contractions.
+        '''
+        terms_out = {}
+        for num_supported_sites, term_set in self.terms.items():
+            trm_set_out = set()
+            for trm in term_set:
+                new_trm = trm.pop_at_idx(*idxs)
+
+                if new_trm.num_supported_sites == num_supported_sites:      # incase nothing was popped
+                    trm_set_out.add(new_trm)
+                else:                                                       # incase something was popped
+                    if new_trm.num_supported_sites in terms_out.keys():
+                        terms_out[new_trm.num_supported_sites].add(new_trm)
+                    else:
+                        terms_out[new_trm.num_supported_sites] = {new_trm}  # creating a new term set incase it was not there before the popping happened
+
+            terms_out[num_supported_sites] = trm_set_out
+
+        mso_out = MultiSiteOperator(self.num_sites-1, terms_out)
+        return mso_out
+
+
+    def to_SparsePauliOp(self):
+        pl = self.to_pauli_list()
+        print(pl)
+        return SparsePauliOp.from_list(pl)
     
     def __str__(self):
         return str(self.to_pauli_list())
+
+    def __repr__(self):
+        return _repr_value(self.terms)
     # we can have add_uniform_local_k_site_terms
     # add_global_k_site_terms (all to all k site interactionsr
     # LMG has all to all two site interactions
@@ -556,9 +705,6 @@ class MultiSiteOperator:
     # like X^(0) + X^(1) + Z^(0)Z^(1) etc
 
     # could also include a function that add terms or instantiates using pauli_lists or SparsePauliOp
-    # include a function that returns the pauli list 
-    # include a function that gives the full dense matrix.
-    # that can be used to check the to_pauli_list function against the SparsePauliOp.to_matrix
 
 if __name__ == '__main__':
     '''
@@ -583,9 +729,17 @@ if __name__ == '__main__':
             }
     # There needs to be a better interface for instantiating MultiSiteOperator.
 
-    mso = MultiSiteOperator(3)
+    h,J =1, 1
 
     mso1 = MultiSiteOperator(4)
+    
+    mso1.add_uniform_single_site_terms(x)
+    mso1.add_uniform_local_two_site_terms(z)
+
     mso2 = MultiSiteOperator(4)
+    
     trm = term({0:y, 1:np.eye(2), 3:z})
     trm1 = term({0:y, 1:np.ones((2,2)), 2:z})
+
+    mso = MultiSiteOperator(3)
+    mso.add_all_terms(mso_terms)
