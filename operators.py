@@ -588,6 +588,25 @@ class MultiSiteOperator:
         if pbc:
             trm = term({self.num_sites-1: matrix, 0: matrix},num_sites = self.num_sites)
             self.terms[2].add(trm)
+
+    def multiply_by_scalar(self, num_supported_sites, scalar):
+        '''
+        multiplies every term in self.terms[num_supported_sites] by scalar
+        does this by multiplying the first matrix in site_ops by that sclar for every term
+        '''
+        new_trm_set = set()
+        for trm in self.terms[num_supported_sites]:
+            site = list(trm.site_ops.keys())[0]
+            new_site_ops = trm.site_ops
+            op = trm[site] * scalar
+            new_site_ops[site] = op
+            
+            new_trm_set.add( 
+                            term( new_site_ops, trm.num_sites)
+            )
+        self.terms[num_supported_sites] = new_trm_set
+
+
     
     def unfold(self):                                                       #FIX: redundant?
         '''
@@ -725,7 +744,7 @@ class MultiSiteOperator:
         mso_out = MultiSiteOperator(self.num_sites+1, terms_out)
         return mso_out 
     
-    def pop_at_idx(self, *idxs):              # TODO Test
+    def pop_at_idx(self, *idxs):              # TODO : test
         '''
         self.to_pauli_list() = 
         [('XII', -1), ('IXI', -1), ('IIX', -1), ('ZZI', -1), ('IZZ', -1), ('ZIZ', -1)]
@@ -755,7 +774,7 @@ class MultiSiteOperator:
 
             terms_out[num_supported_sites] = trm_set_out
 
-        mso_out = MultiSiteOperator(self.num_sites-1, terms_out)
+        mso_out = MultiSiteOperator(self.num_sites-len(idxs), terms_out)
         return mso_out
 
     def contract_classical_layer(self, c_tensor_list, idx_list):
