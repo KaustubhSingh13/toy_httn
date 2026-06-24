@@ -3,6 +3,7 @@ import numpy as np
 from qiskit.quantum_info import SparsePauliOp               # needed to convert MultiSiteOperator to SparsePauliOp for qiskit interface.
 from pauli import pauli
 from custom_repr import _repr_value
+from open_link_contraction import *
 # *************************************************************************
 
 # I have hardcoded 2 level systems in this implementation (eg. spin chains)
@@ -402,11 +403,82 @@ class term:
         out_trm = term(out_site_ops, num_sites = self.num_sites - len(idxs))
         return out_trm 
 
+
+    def contract_layer(self, tensor_list, idx_list):    # TODO: INCOMPLETE
+        '''
+        tensor_dict is a list containing tensors
+
+        idx_list[i] is a dict
+        which tells which indices of tensor_list[i] 
+        are inserted in which site idx of self.
+
+        The values of idx_list[i] are the site indices of self.
+        The keys of   idx_list[i] are the contracted indices of c_tensor[i].
+
+        idx_list[i] = {1:5, 2:6} implies that
+        the 1st index of c_tensor_list[i] is contracted with the 5th site index of self
+        the 2nd index of c_tensor_list[i] is contracted with the 6th site index of self.
+
+        After having performed the contraction, 
+        returns the resultant term instance
+        '''
+        def _int_to_alphabet(x):
+            '''
+            0 -> a
+            1 -> b
+            ...
+            25 -> z
+
+            needed for einsum.
+            '''
+            return chr(97+x)
+
+        def contract_classical_tensor(c_tensor, idx_dict):
+            '''
+            here idx_dict is an element of idx_list 
+            as defined in the documentation for contract_layer
+            '''
+            trm_einstring_list = []
+            mat_list = []
+            tensor_einstring = ''
+            
+            for tensor_idx, trm_idx in idx_dict.items():
+                char = _int_to_alphabet(tensor_idx)
+                tensor_einstring += char
+                trm_einstring_list.append(char + char.upper())
+                mat_list.append(self.site_ops[trm_idx])
+            
+            einstring = tensor_einstring + "," + ",".join(trm_einstring_list) + "," + tensor_einstring.upper() + "->"
+            mat = np.einsum(einstring, c_tensor, *mat_list, c_tensor.conj(), optimize="greedy")
+            return mat
+
+        def contract_quantum_tensor(q_tensor, idx_dict):
+            '''
+            for now I am assuming that the 
+            q_tensor has only quantum indices
+
+            idx_dict is an element of idx_list.
+            '''
+            new_trm_support = list(idx_dict.values())
+            new_trm = self.pop_at_idx(*new_trm_support)
+                
+
+        site_ops_out = {}                                       # PARALELLIZE: VERY HIGH 
+        for i, c_tensor in enumerate(c_tensor_list):
+            for  c_tensor_idx, trm_idx in idx_list[i].items():
+                mat = np.einsum()
+        
     def __repr__(self):
         # maybe change this to give the pauli list form
         return f"{self.site_ops}"
     
     # create a way of instantiating a term through a pauli string.
+
+    def to_SparsePauliOp(self):
+        pl = self.to_pauli_list()
+        spo = SparsePauliOp.from_list(pl)
+        return spo
+
 class MultiSiteOperator:
     '''
     A lightweight implementation of many body operators.
@@ -685,6 +757,30 @@ class MultiSiteOperator:
 
         mso_out = MultiSiteOperator(self.num_sites-1, terms_out)
         return mso_out
+
+    def contract_classical_layer(self, c_tensor_list, idx_list):
+        '''
+        c_tensor_list is a list containing classical tensors
+
+        idx_list[i] is an iterable containing integers
+        which tells which indices of c_tensor_list[i] 
+        are inserted in which site idx of self.
+
+        The values of idx_list[i] are the site indices of self.
+        idx_list[i] = (2,3) implies that
+        the 0th index of c_tensor_list[i] is contracted with the 2nd site index of self
+        the 1th index of c_tensor_list[i] is contracted with the 3rd site index of self.
+
+        After having performed the contraction, 
+        returns the resultant MultiSiteOperator instance
+        '''
+        # this is another place where MultiSiteOperator.apply_to_all terms would be useful.
+
+        for num_supported_sites, term_set in self.terms.items():
+            trm_set_out = set()
+            for trm in trm_set:
+                pass
+
 
 
     def to_SparsePauliOp(self):

@@ -9,6 +9,7 @@ import qr_decomposition as qr
 from pauli import pauli
 from operators import MultiSiteOperator, term
 from qr_decomposition import qr_tensors, combine, projection_to_closest_unitary
+from open_link_contraction import *
 
 '''
 I will be implementing the circuit in Fig. 6e of arXiv:2007.009582v2 Quantum simulation with hybrid tensor networks
@@ -72,141 +73,6 @@ def ising_operators(num_sites,
     mso.add_uniform_local_two_site_terms(-pauli['Z']*J)
     return mso
 
-def _expectation_circuit(params, circuit, operator:SparsePauliOp, 
-                         estimator = StatevectorEstimator(), shots = None):
-    '''
-    Evaluates the expectation value of the state formed by circuit
-    for the operator defined by operator.
-
-    If the circuit does not have paramaeters or is already bound,
-    put params = None
-    '''
-    if shots is not None:
-        estimator.options.default_shots = shots
-
-    pub = (circuit, operator, list([params]))
-    job = estimator.run([pub])
-    result = job.result()
-    expect_value = float(result[0].data.evs[0])
-    return expect_value
-
-def expectation_tensor(params, q_tensor, operator: MultiSiteOperator, 
-                       estimator = StatevectorEstimator(), shots = None):
-    '''
-    Evaluated the expectation value of the operator 
-    with respect to the quantum tensor q_tensor.
-
-    operator here is a MultiSiteOperator obejct.
-
-    This would involve contractions with the P matrices as well.
-
-    \bra{\psi}P^\dagger O P \ket{psi}
-    Essetinally this is taking the expectation value of P^\dagger O P
-    '''
-    q_circuit, P_matrices = q_tensor
-    sandwiched_operator = operator.sandwich(P_matrices)
-
-    spo = sandwiched_operator.to_SparsePauliOp()
-
-    return _expectation_circuit(params, q_circuit, spo, 
-                                estimator, shots)
-    
-def _pop_at_idx(pauli_list, idx):                       # CLEANUP : put these helper functions in a different file. Either that or create a PauliList class that handles all these.
-    '''
-    pauli_list = [('XII', -1), ('IXI', -1), ('IIX', -1), ('ZZI', -1), ('IZZ', -1), ('ZIZ', -1)]
-    idx = 1
-    
-    ->
-    
-    [('XI', -1), ('II', -1), ('IX', -1), ('ZI', -1), ('IZ', -1), ('ZZ', -1)]
-    '''
-    pauli_list_popped = pauli_list.copy()
-    for i,term in enumerate(pauli_list_popped):
-        term = list(term)
-        term[0] = term[0][:idx] + term[0][idx+1:]
-        pauli_list_popped[i] = tuple(term)
-    return pauli_list_popped
-
-
-def _E(sigma:str, q_tensor, params, idx, mso: MultiSiteOperator,            
-       estimator=StatevectorEstimator(), shots=None)->float:            # TODO TEST 
-
-    '''
-    Evaluates the expectation value of the operators defined in mso with sigma inserted at idx.
-    See Eq. A21 of arXiv:2007.009582v2
-    Requires all the inputs of open_link_contraction
-    '''
-    q_circuit, P_matrices = q_tensor
-    # inserting sigma (a pauli string) at index idx
-    mat = pauli[sigma]
-    if mso is None:                                 # when we have all identities
-        trm = term({idx: mat}, q_circuit.num_qubits)
-        mso_with_sigma = MultiSiteOperator(q_circuit.num_qubits, {1:{trm}})
-        return expectation_tensor(params, q_tensor, mso_with_sigma,
-                                  estimator, shots)
-        
-    mso_with_sigma = mso.push_at_idx(mat, idx)                    # would we not require a pop before push? TODO CHECK.
-     
-    return expectation_tensor(params, q_tensor, mso_with_sigma, 
-                              estimator, shots)
-
-
-def open_link_contraction(q_tensor, params, idx, mso: MultiSiteOperator = None,        # TODO TEST
-                          estimator=StatevectorEstimator(), shots = None )->np.ndarray:          # Think of ways of testing this. TEST
-    '''
-    See Fig.1, especially Fig. 1e and section 3 of Appendix A, especially Eq. A22 of arXiv:2007.009582v2 and Appendix A of the PRX paper
-
-    See my notes for the derivation.
-    
-    Evaluates the open link contraction of the quantum tensor q_tensor 
-    with respect to the quantum index idx.
-
-    Gives the resultant matrix M
-    by evaluating the expectation value of operators (these operators are specified by the mso)
-    which are defined on all the indices, leaving the index idx open
-    
-    Assumes that the q_tensor has no classical indices.
-    '''
-    q_circuit, P_matrices = q_tensor                    
-    assert q_circuit.num_qubits - 1 >= idx, f"Can't have index {idx} on a quantum circuit of {q_circuit.num_qubits} qubits."
-    #assert np.sum([len(pauli_op[0])+1-q_circuit.num_qubits for pauli_op in pauli_list]) == 0, 'Each pauli string in pauli_list must have one less than number of operators as the number of qubits in q_circuit'     # make sure that these assert values are working as expected. maybe using allclose would be better.
-    # Calculating the expectation values E(I), E(X), E(Y) and E(Z) as defined in Eq. A21 of arXiv:2007.009582v2
-    def _E(sigma:str) -> float:
-           
-        '''
-        Evaluates the expectation value of the operators defined in mso with sigma inserted at idx.
-        See Eq. A21 of arXiv:2007.009582v2
-        Requires all the inputs of open_link_contraction
-        '''
-        q_circuit, P_matrices = q_tensor
-        # inserting sigma (a pauli string) at index idx
-        mat = pauli[sigma]
-        if mso is None:                                 # when we have all identities
-            trm = term({idx: mat}, q_circuit.num_qubits)
-            mso_with_sigma = MultiSiteOperator(q_circuit.num_qubits, {1:{trm}})
-            return expectation_tensor(params, q_tensor, mso_with_sigma,
-                                      estimator, shots)
-            
-        mso_with_sigma = mso.push_at_idx(mat, idx)                    # would we not require a pop before push? TODO CHECK.
-         
-        return expectation_tensor(params, q_tensor, mso_with_sigma, 
-                                  estimator, shots)
-
-    # Computing M as done in A22 of arXiv:2007.009582v2
-    '''
-
-    M = np.zeros([2,2],dtype = complex)
-
-    for sigma in pauli:
-        if sigma != 'Y':
-            M += _E(sigma)*pauli[sigma]
-        else:
-            M -= _E(sigma)*pauli[sigma]
-    '''
-
-    M = _E('I')*pauli['I'] + _E('X')*pauli['X'] - _E('Y')*pauli['Y'] + _E('Z')*pauli['Z']   # would present a minor speed up if we didnt' loop through the pauli matrices.
-    return M*.5
-
 
 def contract_loop(c_tensor, operators = None):
     '''
@@ -225,33 +91,6 @@ def contract_loop(c_tensor, operators = None):
     O1 = _pauli_character_to_array(operators[1])
     
     return np.einsum('ij,ik,jl,kl',c_tensor,O0,O1,c_tensor_conj, optimize = 'greedy')    # if this throws a dtype error, complexify c_tensor.
-
-
-def norm_of_network(q_tensor, params, c_tensor, 
-                    estimator = StatevectorEstimator(), shots = None):
-    '''
-    This assumes that c_tensor.shape = (2,2)
-
-     _________    _________
-    |         |  |         |
-    |q_tensor |__|c_tensor |
-    |_________|  |_________|
-    ||  ...   |       |
-
-    The last index of q_tensor is contracted with
-    the 0th index of c_tensor.
-    '''
-    q_circuit, P_matrices = q_tensor            # TODO incomplete`
-
-    num_qubits = q_tensors.num_qubits
-    identity_list = [ ('I'*(num_qubits-1), 1) ]
-    M_identity = open_link_contraction(q_circuit, params, num_qubits-1, identity_list, estimator, shots)
-    norm = contract_loop(c_tensor, operators = [M_identity, 'I'])
-    
-    # is it possible to change c_tensor here itself? 
-    # would c_tensor = c_tensor / norm change c_tensor for good?
-    return norm
-
 
 def isometrise_quantum_tensor(q_tensor, params, iso_idx,
                               estimator = StatevectorEstimator(), shots = None):
@@ -313,8 +152,45 @@ def unitarise_all_P_matrices(q_tensor):
 
     return (q_circuit, P_matrices)
 
-def effective_hamiltonian_quantum_tensor():
-    pass
+
+def norm_of_network(q_tensor, params, c_tensor, 
+                    estimator = StatevectorEstimator(), shots = None):
+    '''
+    This assumes that c_tensor.shape = (2,2)
+
+     _________    _________
+    |         |  |         |
+    |q_tensor |__|c_tensor |
+    |_________|  |_________|
+    ||  ...   |       |
+
+    The last index of q_tensor is contracted with
+    the 0th index of c_tensor.
+    '''
+    q_circuit, P_matrices = q_tensor            # TODO incomplete`
+
+    num_qubits = q_tensors.num_qubits
+    identity_list = [ ('I'*(num_qubits-1), 1) ]
+    M_identity = open_link_contraction(q_circuit, params, num_qubits-1, identity_list, estimator, shots)
+    norm = contract_loop(c_tensor, operators = [M_identity, 'I'])
+    
+    # is it possible to change c_tensor here itself? 
+    # would c_tensor = c_tensor / norm change c_tensor for good?
+    return norm
+
+def effective_hamiltonian_quantum_tensor(c_tensor, hamiltonain:MultiSiteOperator):
+    '''
+    The hTTN structure is as shown below.
+     _________    _________
+    |         |  |         |
+    |q_tensor |__|c_tensor |
+    |_________|  |_________|
+    ||  ...   |       |
+
+    '''
+    
+    
+
 def effective_hamiltonian_classical_tensor():
     pass
 
@@ -333,6 +209,7 @@ if __name__ == '__main__':
     par1 = [0 for _ in range(num_quantum_legs)]
     par2 = [np.random.randn() for _ in range(num_quantum_legs)]
 
+    trm = term({0:pauli['X'], 1:np.ones([2,2])},num_sites = 2)
     mso = MultiSiteOperator(3)
     mso.add_uniform_single_site_terms(pauli['X']*(-h))
     mso.add_uniform_local_two_site_terms(pauli['Z']*(-J))       
