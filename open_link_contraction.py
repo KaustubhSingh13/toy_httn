@@ -1,6 +1,4 @@
 import numpy as np
-from qiskit import QuantumCircuit, transpile
-from qiskit.circuit import ParameterVector
 from qiskit.quantum_info import SparsePauliOp
 from qiskit.primitives import StatevectorEstimator
 from qiskit_aer.primitives import EstimatorV2 as AerEstimator
@@ -164,8 +162,8 @@ def open_link_contraction(q_tensor, params, idx, mso = None,        # TODO TEST
     M = _E('I')*pauli['I'] + _E('X')*pauli['X'] - _E('Y')*pauli['Y'] + _E('Z')*pauli['Z']   # would present a minor speed up if we didnt' loop through the pauli matrices.
     return M*.5
 
-def open_link_contraction_term(q_tensor, params, idx, trm,        # TODO : FIX there is no information about which index of the quantum tensor is being contracted with which site of the term.
-                          estimator=StatevectorEstimator(), shots = None )->np.ndarray:          # Think of ways of testing this. TEST
+def open_link_contraction_term(q_tensor, params, idx, trm,       
+                          estimator=StatevectorEstimator(), shots = None )->np.ndarray:          
     q_circuit, P_matrices = q_tensor
     assert q_circuit.num_qubits-1 == trm.num_sites, f"q_circuit has {q_circuit.num_qubits} qubits but term has {trm.num_sites} sites."
 
@@ -180,7 +178,7 @@ def open_link_contraction_term(q_tensor, params, idx, trm,        # TODO : FIX t
         # inserting sigma (a pauli string) at index idx
         mat = pauli[sigma]
             
-        trm_with_sigma = trm.push_at_idx(mat, idx)                    # would we not require a pop before push? TODO CHECK.
+        trm_with_sigma = trm.push_at_idx(mat, idx)                   
          
         return expectation_tensor(params, q_tensor, trm_with_sigma, 
                                   estimator, shots)

@@ -10,6 +10,7 @@ from pauli import pauli
 from operators import MultiSiteOperator, term
 from qr_decomposition import qr_tensors, combine, projection_to_closest_unitary
 from open_link_contraction import *
+import vqe 
 
 '''
 I will be implementing the circuit in Fig. 6e of arXiv:2007.009582v2 Quantum simulation with hybrid tensor networks
