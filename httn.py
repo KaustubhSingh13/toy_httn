@@ -200,8 +200,29 @@ def norm_of_network(q_tensor, params, c_tensor,
   
     *********************************************************************
 '''
-def effective_hamiltonian_q_tensor_1(q_tensor_2, param_2, hamiltonain:MultiSiteOperator, 
-                                     estimator = StatevectorEstimator(), shots = None):
+
+def _check_and_add(term_set, trm):
+    '''
+    Checks if there is a term in term_set 
+    which has support on the same sites as trm.
+    If so, then adds a term equal to the sum of the two terms and removes the preexisting term
+    if not, then simply adds trm to term_set.
+    '''
+    sites_with_support = trm.keys()
+
+    for trmm in term_set:                       # TODO Speedup: This can be O(1) instead of O(N) if we use hash for the set right.
+        if trmm.keys() == sites_with_support:
+            out_trm = trmm + trm
+            term_set.discard(trmm)
+            term_set.add(out_trm)
+            return term_set
+    term_set.add(trm)
+    return term_set
+
+def effective_hamiltonian_q_tensor_1(q_tensor_1, param_1, q_tensor_2, param_2, 
+                                     hamiltonian:MultiSiteOperator, 
+                                     estimator = StatevectorEstimator(), shots = None,
+                                     get_energy = True):
     '''
     gives the local effective hamiltonian for quantum_tensor_1
     '''
@@ -220,9 +241,10 @@ def effective_hamiltonian_q_tensor_1(q_tensor_2, param_2, hamiltonain:MultiSiteO
                                                estimator = estimator, shots = shots)
 
                 M_with_p = p_matrices_2[0] @ M @ p_matrices_2[0].conj().T
-                new_term = term( site_ops = {2: M_with_P}, num_sites = 3
+                new_term = term( site_ops = {2: M_with_p}, num_sites = 3
                         )   # because q_tensor_1 has 3 indices, and M is contracted on index 2 (the last index)
-                out_terms[1].add(new_term)
+                out_terms[1] = _check_and_add(out_terms[1],new_term)
+                #out_terms[1].add(new_term)
 
             elif set(trm.keys()) & {2,3} != set():
                 # if there is a non zero intersection in the sites with support
@@ -235,13 +257,14 @@ def effective_hamiltonian_q_tensor_1(q_tensor_2, param_2, hamiltonain:MultiSiteO
 
                 # so far these lines are the same the previous if statement
                 # reudce this repetetiveness in code when you have the will to live by having cleverer conditionals
-                other_idx = list(set(trm.keys()) & {0,1})[0]
+                other_idx = list(set(trm.keys()) & {0,1})[0]    # assuming only two body interactions
 
-                new_term = term( site_ops = {other_idx: trm[other_idx], 2: M_with_P}, 
+                new_term = term( site_ops = {other_idx: trm[other_idx], 2: M_with_p}, 
                                  num_sites = 3
                                 )   # because q_tensor_1 has 3 indices, and M is contracted on index 2 (the last index) for more than 2 body interactions we would have to fix this line and the following line
 
-                out_terms[2].add(new_term)
+                out_terms[2] = _check_and_add(out_terms[2],new_term)
+                #out_terms[2].add(new_term)
 
             else:
                 # incase there is no intersection of the sites with support with {2,3} whatsoever
@@ -249,17 +272,27 @@ def effective_hamiltonian_q_tensor_1(q_tensor_2, param_2, hamiltonain:MultiSiteO
                 # but i am too tired for all that
                 new_site_ops = trm.site_ops
                 new_trm = term(new_site_ops, num_sites  = 3)
-                out_terms[new_trm.num_supported_sites].add(new_trm)
+
+                out_terms[new_trm.num_supported_sites] = _check_and_add(out_terms[new_trm.num_supported_sites],new_trm)
+                #out_terms[new_trm.num_supported_sites].add(new_trm)
     
     mso_out = MultiSiteOperator(num_sites = 3, terms = out_terms)
-    return mso_out
 
-def effective_hamiltonian_q_tensor_2(q_tensor_1, param_1, hamiltonain:MultiSiteOperator, 
-                                     estimator = StatevectorEstimator(), shots = None):
+    if get_energy:
+        energy = expectation_tensor(params_1, q_tensor_1, mso_out)
+        return mso_out, energy
+
+    return mso_out, None
+
+def effective_hamiltonian_q_tensor_2(q_tensor_1, param_1, q_tensor_2, param_2,
+                                     hamiltonian:MultiSiteOperator, 
+                                     estimator = StatevectorEstimator(), shots = None,
+                                     get_energy = True):
     '''
     gives the local effective hamiltonian for quantum_tensor_1
     '''
     qc_1, p_matrices_1 = q_tensor_1
+
     
     #   FOR NOW I AM HARDCODING TWO BODY INTERACTIONS
     out_terms = {1:set(), 2:set()}
@@ -270,50 +303,62 @@ def effective_hamiltonian_q_tensor_2(q_tensor_1, param_1, hamiltonain:MultiSiteO
                 # we contract the loop with that part of the hamiltonian
                 # for now i am popping the matrices at 0 and 1 even though i have ensured there aren't any. this is to avoid any bt with the term.to_pauli_list() method. 
                 # next time look for a more elegant and efficient solution
-                M = open_link_contraction_term(q_tensor = q_tensor_2, params = param_2, idx = 2, trm = trm.pop_at_idx(2,3),
+                M = open_link_contraction_term(q_tensor = q_tensor_1, params = param_1, idx = 2, trm = trm.pop_at_idx(2,3),
                                                estimator = estimator, shots = shots)
 
-                M_with_p = p_matrices_2[2] @ M @ p_matrices_2[2].conj().T
-                new_term = term( site_ops = {0: M_with_P}, num_sites = 3
+                M_with_p = p_matrices_1[2] @ M @ p_matrices_1[2].conj().T
+                new_term = term( site_ops = {0: M_with_p}, num_sites = 3
                         )   # because q_tensor_1 has 3 indices, and M is contracted on index 2 (the last index)
-                out_terms[1].add(new_term)
+                out_terms[1] = _check_and_add(out_terms[1],new_term)
+                #out_terms[1].add(new_term)
 
-            elif set(trm.keys()) & {2,3} != set():
+            elif set(trm.keys()) & {0,1} != set():
                 # if there is a non zero intersection in the sites with support
                 # we would have to create a term with support on two sites for the effective hamiltonain
-                M = open_link_contraction_term(q_tensor = q_tensor_2, params = param_2, idx = 2, trm = trm.pop_at_idx(2,3),
+                M = open_link_contraction_term(q_tensor = q_tensor_1, params = param_1, idx = 2, trm = trm.pop_at_idx(2,3),
 
                                                estimator = estimator, shots = shots)
 
-                M_with_p = p_matrices_2[2] @ M @ p_matrices_2[2].conj().T
+                M_with_p = p_matrices_1[2] @ M @ p_matrices_1[2].conj().T
 
                 # so far these lines are the same the previous if statement
                 # reudce this repetetiveness in code when you have the will to live by having cleverer conditionals
-                other_idx = list(set(trm.keys()) & {2,3})[0]
-
-                new_term = term( site_ops = {other_idx: trm[other_idx], 0: M_with_P}, 
+                other_idx = list(set(trm.keys()) & {2,3})[0] -1 # This is veryyy inelegant and haphazard. this would not generalise at all. 
+                                                                # TODO: add a dict which matches the site index with the tensor indices it is contracted with so we dont have to hardcode these things.
+                                                                # it works for effective_hamiltonian_q_tensor_1 because there the site index of the terms is equal to the tensor index it is contracted with.
+                new_term = term( site_ops = {other_idx: trm[other_idx], 0: M_with_p}, 
                                  num_sites = 3
                                 )   # because q_tensor_1 has 3 indices, and M is contracted on index 2 (the last index) for more than 2 body interactions we would have to fix this line and the following line
 
-                out_terms[2].add(new_term)
+                out_terms[2] = _check_and_add(out_terms[2],new_term)
+                #out_terms[2].add(new_term)
 
             else:
                 # incase there is no intersection of the sites with support with {2,3} whatsoever
                 # there has to be a more elegant way of doing this using the methods i have defined
                 # but i am too tired for all that
-                new_site_ops = trm.site_ops
+                
+                new_site_ops = {site_idx -1: mat for site_idx,mat in trm.items()} # this is veryy haphazard and hardcoded. it would not generalise well at all
                 new_trm = term(new_site_ops, num_sites  = 3)
-                out_terms[new_trm.num_supported_sites].add(new_trm)
+
+
+                out_terms[new_trm.num_supported_sites] = _check_and_add(out_terms[new_trm.num_supported_sites],new_trm)
+                #out_terms[new_trm.num_supported_sites].add(new_trm)
     
     mso_out = MultiSiteOperator(num_sites = 3, terms = out_terms)
-    return mso_out
+
+    if get_energy:
+        energy = expectation_tensor(params_2, q_tensor_2, mso_out)
+        return mso_out, energy
+
+    return mso_out, None
 
 
 
 def optimise_quantum_tensor(q_tensor, param, effective_hamiltonian:MultiSiteOperator,
                             estimator = StatevectorEstimator(), shots = None):
     qc, p_matrices = q_tensor
-    ham = effective_hamiltonain.sandwich(p_matrices)
+    ham = effective_hamiltonian.sandwich(p_matrices)
     spo = ham.to_SparsePauliOp()
     res = vqe.run_vqe(qc, param, spo,
                       estimator = estimator, shots = shots)
@@ -321,9 +366,10 @@ def optimise_quantum_tensor(q_tensor, param, effective_hamiltonian:MultiSiteOper
     return new_params 
 
 
-def run_sweep(q_tensor_1, init_params_1, 
+def run_sweep(q_tensor_1, init_params_1,            # TODO: ADD normalisation functions
               q_tensor_2, init_params_2,
-              hamiltonian: MultiSiteOperator, num_sweeps = 2):
+              hamiltonian: MultiSiteOperator, num_sweeps = 10,
+              get_energy = True):
     """
     we will first set quantum_tensor_1 to be the isometrisation centre
     and then optimise it before shifting the isometrisation centre 
@@ -332,39 +378,69 @@ def run_sweep(q_tensor_1, init_params_1,
     We will then shift the isometrisation centre back to quantum_tensor_1
     and repeat. 
     """
+    energies = []
 
     # first setting q_tensor_1 to be the isometrisation centre
-    isometrised_q_tensor_2, R_2 = isometrise_quantum_tensor(q_tensor_2, init_params_2, 0)
+    q_tensor_2, R_2 = isometrise_quantum_tensor(q_tensor_2, init_params_2, 0)
     
     q_circuit_1, p_matrices_1 = q_tensor_1 
-    p_matrices_1[2] = p_matrices_1[2] @ R_2         # absorbing R_2 into q_tensor_1
-    q_tensor_1 = (q_circuit_2, p_matrices_1)
+    p_matrices_1[2] = p_matrices_1[2] @ R_2.T           # absorbing R_2 into q_tensor_1
+    q_tensor_1 = (q_circuit_1, p_matrices_1)
     q_tensor_1 = unitarise_all_P_matrices(q_tensor_1)   # unitarising the p matrices.
+
+    params_1 = init_params_1 
+    params_2 = init_params_2
 
     for sweep_idx in range(num_sweeps):
         # obtaining the effective_hamiltonain for q_tensor_1
+        eff_ham_1,energy = effective_hamiltonian_q_tensor_1(q_tensor_1, params_1, 
+                                                            q_tensor_2, params_2, hamiltonian,
+                                                            get_energy = get_energy)
+        energies.append(energy)
+
         # optimising the effective_hamiltonian for q_tensor_1
+        params_1 = optimise_quantum_tensor(q_tensor_1, params_1, eff_ham_1)
 
         # shifting the isometrisation centre to q_tensor_2
-
+        q_tensor_1, R_1 = isometrise_quantum_tensor(q_tensor_1, params_1, 2)
+        
+        q_circuit_2, p_matrices_2 = q_tensor_2 
+        p_matrices_2[0] = p_matrices_2[0] @ R_1.T           # absorbing R_1 into q_tensor_2
+        q_tensor_2 = (q_circuit_2, p_matrices_2)
+        q_tensor_2 = unitarise_all_P_matrices(q_tensor_2)   # unitarising the p matrices.
+        
         # obtaining the effective hamiltonian for q_tensor_2
+        eff_ham_2,energy = effective_hamiltonian_q_tensor_2(q_tensor_1, params_1,
+                                                            q_tensor_2, params_2, hamiltonian,
+                                                            get_energy = get_energy)
+        energies.append(energy)
+
         # optimising the effective_hamiltonain for q_tensor_2
+        params_2 = optimise_quantum_tensor(q_tensor_2, params_2, eff_ham_2)
         
         # shifting the isometrisation centre back to q_tensor_1
-        pass
+        q_tensor_2, R_2 = isometrise_quantum_tensor(q_tensor_2, params_2, 0)
+        
+        q_circuit_1, p_matrices_1 = q_tensor_1 
+        p_matrices_1[2] = p_matrices_1[2] @ R_2.T           # absorbing R_2 into q_tensor_1
+        q_tensor_1 = (q_circuit_1, p_matrices_1)
+        q_tensor_1 = unitarise_all_P_matrices(q_tensor_1)   # unitarising the p matrices.
+    
+    return energies
+        
 
 # implementing the Ising model Hamiltonain
-hamiltonain_mso = MultiSiteOperator(4)
+hamiltonian_mso = MultiSiteOperator(4)
 h,J = 1,1
-hamiltonain_mso.add_uniform_single_site_terms(-h*pauli['X'])
-hamiltonain_mso.add_uniform_local_two_site_terms(pauli['Z'], pbc = False)
-hamiltonain_mso.multiply_by_scalar(num_supported_sites = 2, scalar = -1)
+hamiltonian_mso.add_uniform_single_site_terms(-h*pauli['X'])
+hamiltonian_mso.add_uniform_local_two_site_terms(pauli['Z'], pbc = False)
+hamiltonian_mso.multiply_by_scalar(num_supported_sites = 2, scalar = -1)
 
 # initialising the quanutm tensors from the random normal distribution
-q_tensor_1 = QuantumTensor(2)
+q_tensor_1 = QuantumTensor(3)
 params_1 = np.random.randn(q_tensor_1[0].num_parameters)
 
-q_tensor_2 = QuantumTensor(2)
+q_tensor_2 = QuantumTensor(3)
 params_2 = np.random.randn(q_tensor_2[0].num_parameters)
 
 

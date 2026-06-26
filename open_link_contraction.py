@@ -1,4 +1,5 @@
 import numpy as np
+from operators import term, MultiSiteOperator
 from qiskit.quantum_info import SparsePauliOp
 from qiskit.primitives import StatevectorEstimator
 from qiskit_aer.primitives import EstimatorV2 as AerEstimator
@@ -160,6 +161,7 @@ def open_link_contraction(q_tensor, params, idx, mso = None,        # TODO TEST
     '''
 
     M = _E('I')*pauli['I'] + _E('X')*pauli['X'] - _E('Y')*pauli['Y'] + _E('Z')*pauli['Z']   # would present a minor speed up if we didnt' loop through the pauli matrices.
+    M = (M + M.conj().T)
     return M*.5
 
 def open_link_contraction_term(q_tensor, params, idx, trm,       
@@ -184,5 +186,6 @@ def open_link_contraction_term(q_tensor, params, idx, trm,
                                   estimator, shots)
 
     M = _E('I')*pauli['I'] + _E('X')*pauli['X'] - _E('Y')*pauli['Y'] + _E('Z')*pauli['Z']   # would present a minor speed up if we didnt' loop through the pauli matrices.
+    M = (M + M.conj().T)
     return .5 * M
 

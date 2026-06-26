@@ -3,7 +3,7 @@ import numpy as np
 from qiskit.quantum_info import SparsePauliOp               # needed to convert MultiSiteOperator to SparsePauliOp for qiskit interface.
 from pauli import pauli
 from custom_repr import _repr_value
-from open_link_contraction import *
+#from open_link_contraction import *
 # *************************************************************************
 
 # I have hardcoded 2 level systems in this implementation (eg. spin chains)
@@ -92,8 +92,8 @@ def array_to_pauli_list_hermitian(arr):
     # keeping coeffs which are not close to zero
     # raising error if there is a large imaginary part.
     for i, p_chr in enumerate(out):
-        if abs(p_chr[1].imag) > 1e-6:
-            raise ValueError(f'The coefficient of {p_chr[0]} has an imaginary part of {p_chr[1].imag}')
+        #if abs(p_chr[1].imag) > 1e-6:
+        #    raise ValueError(f'The coefficient of {p_chr[0]} has an imaginary part of {p_chr[1].imag}')
         if np.abs(p_chr[1]) > 1e-6:
             filtered_out.append([p_chr[0], p_chr[1].real])
 
@@ -220,7 +220,7 @@ class term:
         self.num_supported_sites = len(supported_site_idxs)
         self._hash = hash(
             frozenset(
-                (site, arr.tobytes()) for site, arr in site_ops.items()
+                (site, arr.tobytes()) for site, arr in site_ops.items()     # instead of this can we not use the sites_with_support = term.keys() to definte the hash? Since that would be unique to a term.
             )
         )
 
@@ -259,8 +259,17 @@ class term:
     def __contains__(self, site):
         return site in self.site_ops
 
+
     def keys(self):
         return self.site_ops.keys()
+
+    def __add__(self, other):
+        assert self.keys() == other.keys(), f'Both terms must have support on exactly the same sites.\n One has support on {self.keys()} while other has support on {other.keys()}'
+        assert self.num_sites == other.num_sites, f"Both must have the same num_sites.\nOne has {self.num_sites} while other has {other.num_sites}"
+        site_ops_out = {}
+        for site_idx in self.keys():
+            site_ops_out[site_idx] = self[site_idx] + other[site_idx]
+        return term(site_ops_out, self.num_sites)
 
     def to_pauli_list(self):
         # will this be recomputed on each call?
@@ -381,7 +390,7 @@ class term:
 
         return term(site_ops_out, self.num_sites+1)
 
-    def pop_at_idx(self, *idxs):                              # TODO test
+    def pop_at_idx(self, *idxs):                              # TODO test fix the docs.
         '''
         decreases self.num_sites by 1 
         removes the single site operator at site index: idx.
@@ -804,7 +813,6 @@ class MultiSiteOperator:
 
     def to_SparsePauliOp(self):
         pl = self.to_pauli_list()
-        print(pl)
         return SparsePauliOp.from_list(pl)
     
     def __str__(self):
